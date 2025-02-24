@@ -1,5 +1,7 @@
 Clone the project
 CD projectname
 npm install web3
-create address.js for contractAddress
-create privateKey.js for metamask account private key user
+npm install dotenv
+## create .env that contain
+contractAddress=yourcontrataddress
+privateKey=userprivatekeyaccount

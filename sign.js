@@ -1,6 +1,5 @@
 const {Web3} = require('web3');
-const contractAddress = require('./address');
-const privateKey = require('./privateKey');
+const { contractAddress, privateKey } = require('./config');
 
 // Connect to Sepolia test network
 const web3 = new Web3('https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a');
