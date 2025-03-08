@@ -1,5 +1,5 @@
 const { Web3 } = require('web3');
-const deployedAddress = require('./deployedStakingAddress.json'); // Matches deploy.js
+const deployedAddress = require('./deployedStakingAddress.json');
 const { privateKey } = require('./config');
 const fs = require('fs');
 
@@ -23,21 +23,21 @@ async function signAndSendTx(testConfig) {
     if (!skipDynamicGas) {
         try {
             const block = await web3.eth.getBlock('latest');
-            const baseFeePerGas = block.baseFeePerGas; // BigInt
-            const maxPriorityFee = '0x3b9aca00'; // 1 gwei in hex
+            const baseFeePerGas = block.baseFeePerGas;
+            const maxPriorityFee = '0x3b9aca00';
             tx.maxPriorityFeePerGas = maxPriorityFee;
-            // Convert maxPriorityFee to BigInt before adding
-            tx.maxFeePerGas = web3.utils.toHex(BigInt(baseFeePerGas) + BigInt(web3.utils.hexToNumber(maxPriorityFee)));
-            
-            // Test call
-            console.log("Testing stake() call...");
-            await contract.methods.stake().call({ from: account.address, value: tx.value });
-            console.log("stake() call succeeded in simulation");
+            tx.maxFeePerGas = web3.utils.toHex(
+                BigInt(baseFeePerGas) + BigInt(web3.utils.hexToNumber(maxPriorityFee)));
 
-            // Estimate gas
+            console.log(`Testing ${name.includes('Unstake') ? 'unstake' : 'stake'}() call...`);
+            await (name.includes('Unstake') ?
+                contract.methods.unstake().call({ from: account.address }) :
+                contract.methods.stake().call({ from: account.address, value: tx.value }));
+            console.log(`${name.includes('Unstake') ? 'unstake' : 'stake'}() call succeeded in simulation`);
+
             console.log("Estimating gas...");
             const gasEstimate = await web3.eth.estimateGas(tx);
-            tx.gas = web3.utils.toHex(Math.floor(gasEstimate * 1.2));
+            tx.gas = web3.utils.toHex((gasEstimate * BigInt(12)) / BigInt(10));
             console.log("Gas Estimated:", tx.gas);
         } catch (e) {
             console.log("Gas Fetch/Error: ", e.message);
@@ -50,10 +50,13 @@ async function signAndSendTx(testConfig) {
     }
 
     if (tweakFn) {
-        tx = tweakFn(tx);
+        tx = tweakFn(tx, web3);
         if (!skipDynamicGas) {
+            delete tx.gas;
+            console.log("Re-estimating gas for tweaked tx...");
             const gasEstimate = await web3.eth.estimateGas(tx);
-            tx.gas = web3.utils.toHex(Math.floor(gasEstimate * 1.2));
+            tx.gas = web3.utils.toHex((gasEstimate * BigInt(12)) / BigInt(10));
+            console.log("Tweaked Gas Estimated:", tx.gas);
         }
     }
 
@@ -84,10 +87,10 @@ const testCases = [
     {
         name: "Positive Success - Unstake ETH",
         web3Url: 'https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a',
-        tweakFn: (tx) => ({
+        tweakFn: (tx, web3) => ({
             ...tx,
             value: '0x0',
-            data: new Web3(tx.web3Url).eth.Contract(contractABI, deployedAddress).methods.unstake().encodeABI()
+            data: new web3.eth.Contract(contractABI, deployedAddress).methods.unstake().encodeABI()
         }),
         shouldFail: false,
         skipDynamicGas: false
@@ -95,9 +98,9 @@ const testCases = [
     {
         name: "Negative - Invalid Smart Contract Address",
         web3Url: 'https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a',
-        tweakFn: (tx) => {
-            const invalidAddress = '0x0000000000000000000000000000000000000123';
-            const contract = new Web3(tx.web3Url).eth.Contract(contractABI, invalidAddress);
+        tweakFn: (tx, web3) => {
+            const invalidAddress = '0x00000000BABE0000000000000000000000000123';
+            const contract = new web3.eth.Contract(contractABI, invalidAddress);
             return {
                 ...tx,
                 to: invalidAddress,
@@ -110,7 +113,7 @@ const testCases = [
     {
         name: "Negative - Gas Fee Too High",
         web3Url: 'https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a',
-        tweakFn: (tx) => ({
+        tweakFn: (tx, web3) => ({
             ...tx,
             maxFeePerGas: '0x152d02c7e14af6800000',
             maxPriorityFeePerGas: '0x3b9aca00'
@@ -121,7 +124,7 @@ const testCases = [
     {
         name: "Negative - Insufficient Funds (High Value)",
         web3Url: 'https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a',
-        tweakFn: (tx) => ({
+        tweakFn: (tx, web3) => ({
             ...tx,
             value: '0x152d02c7e14af6800000'
         }),
@@ -138,20 +141,31 @@ const testCases = [
     {
         name: "Negative - Unstake Before Lock Period",
         web3Url: 'https://sepolia.infura.io/v3/ade5ee2ae6834fb8b914d2fa10f6853a',
-        tweakFn: (tx) => ({
+        tweakFn: (tx, web3) => ({
             ...tx,
             value: '0x0',
-            data: new Web3(tx.web3Url).eth.Contract(contractABI, deployedAddress).methods.unstake().encodeABI()
+            data: new web3.eth.Contract(contractABI, deployedAddress).methods.unstake().encodeABI()
         }),
         shouldFail: true,
         skipDynamicGas: false
     }
 ];
 
+async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function runTests() {
-    console.log("Note: Run 'Positive Success - Stake ETH' first, wait 60 seconds, then run others.");
-    for (const test of testCases) {
-        await signAndSendTx(test);
+    console.log("Running Full Test Suite with Delay...");
+    for (let i = 0; i < testCases.length; i++) {
+        await signAndSendTx(testCases[i]);
+        if (testCases[i].name === "Positive Success - Stake ETH" && i < testCases.length - 1) {
+            console.log("Waiting 60 seconds for lock period...");
+            await delay(60000);
+        } else if (i < testCases.length - 1) {
+            console.log("Pausing 10 seconds to avoid rate limit...");
+            await delay(10000); // 10-second delay between tests
+        }
     }
     console.log("\n=== All Tests Completed ===");
 }
